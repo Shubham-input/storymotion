@@ -11,6 +11,10 @@ import { MOMENTS } from '../engine/automaticStory';
 import { STORY_SCENES } from '../data/stories/scenes';
 import type { BodyGestureEvent } from '../vision/bodyGestures';
 
+vi.mock('../audio/generatedNarration', () => ({
+  generatedNarrationFor: () => undefined,
+}));
+
 /** Story second at which the first invitation (the shield) opens. */
 const SHIELD_S = MOMENTS[0].startMs / 1000;
 
@@ -110,6 +114,89 @@ describe('narrator controller', () => {
     n.replay();
     expect(synth.texts()).toEqual(['Steady wins.', 'Steady wins.']);
   });
+  it('uses generated audio, pauses and resumes it, then falls back to speech on error', async () => {
+    const tracks: Array<{
+      playbackRate: number;
+      play: ReturnType<typeof vi.fn>;
+      pause: ReturnType<typeof vi.fn>;
+      onended: (() => void) | null;
+      onerror: (() => void) | null;
+    }> = [];
+    const withAudio = createNarrator(
+      () => synth as unknown as SpeechSynthesis,
+      (text) => new FakeUtterance(text) as unknown as SpeechSynthesisUtterance,
+      () => {
+        const track = {
+          playbackRate: 1,
+          play: vi.fn().mockResolvedValue(undefined),
+          pause: vi.fn(),
+          onended: null,
+          onerror: null,
+        };
+        tracks.push(track);
+        return track as unknown as HTMLAudioElement;
+      },
+    );
+
+    withAudio.setLine('a', 'Canonical caption.', '/audio/a.wav', 9000, 8000);
+    expect(tracks).toHaveLength(1);
+    expect(tracks[0].play).toHaveBeenCalledOnce();
+    expect(tracks[0].playbackRate).toBeGreaterThan(1);
+    expect(synth.speak).not.toHaveBeenCalled();
+
+    withAudio.setPaused(true);
+    expect(tracks[0].pause).toHaveBeenCalledOnce();
+    withAudio.setPaused(false);
+    expect(tracks[0].play).toHaveBeenCalledTimes(2);
+
+    tracks[0].onerror?.();
+    expect(synth.texts()).toEqual(['Canonical caption.']);
+  });
+  it('starts queued generated audio after camera setup instead of browser speech', () => {
+    const tracks: Array<{
+      playbackRate: number;
+      play: ReturnType<typeof vi.fn>;
+      pause: ReturnType<typeof vi.fn>;
+      onended: (() => void) | null;
+      onerror: (() => void) | null;
+    }> = [];
+    const withAudio = createNarrator(
+      () => synth as unknown as SpeechSynthesis,
+      (text) => new FakeUtterance(text) as unknown as SpeechSynthesisUtterance,
+      () => {
+        const track = {
+          playbackRate: 1,
+          play: vi.fn().mockResolvedValue(undefined),
+          pause: vi.fn(),
+          onended: null,
+          onerror: null,
+        };
+        tracks.push(track);
+        return track as unknown as HTMLAudioElement;
+      },
+    );
+
+    // StoryPlayer queues its opening line while the camera permission UI is open.
+    withAudio.setPaused(true);
+    withAudio.setLine('a', 'Canonical caption.', '/audio/a.wav');
+    expect(tracks).toHaveLength(0);
+    expect(synth.speak).not.toHaveBeenCalled();
+
+    // Finishing camera setup must start the recording, not speechSynthesis.
+    withAudio.setPaused(false);
+    expect(tracks).toHaveLength(1);
+    expect(tracks[0].play).toHaveBeenCalledOnce();
+    expect(synth.speak).not.toHaveBeenCalled();
+  });
+  it('reports completion only when the current narration actually ends', () => {
+    const finished = vi.fn();
+    n.setLine('a', 'Wait for me.', undefined, undefined, undefined, finished);
+    expect(finished).not.toHaveBeenCalled();
+    last(synth).onend?.();
+    expect(finished).toHaveBeenCalledOnce();
+    last(synth).onend?.();
+    expect(finished).toHaveBeenCalledOnce();
+  });
   it('interjects a reaction once, ending the current line for good', () => {
     n.setLine('beat', 'A long story line.');
     n.interject('react:shield', 'Wow!');
@@ -149,10 +236,13 @@ describe('narrator controller', () => {
 vi.mock('../components/gesture/GestureCamera', () => ({
   GestureCamera: ({
     onGesture,
+    onStatusChange,
   }: {
     onGesture: (event: BodyGestureEvent) => void;
+    onStatusChange?: (status: 'missing') => void;
   }) => (
     <>
+      <button onClick={() => onStatusChange?.('missing')}>Camera loaded</button>
       <button onClick={() => onGesture({ type: 'ARMS_WIDE' })}>
         Synthetic ARMS_WIDE
       </button>
@@ -167,6 +257,7 @@ describe('story player narration', () => {
   let synth: ReturnType<typeof fakeSynth>;
   const beats = animatedBeats.hare;
   const advance = (ms: number) => act(() => vi.advanceTimersByTime(ms));
+  const finishCurrentLine = () => act(() => last(synth)?.onend?.());
   const timesSpoken = (text: string) =>
     synth.texts().filter((spoken) => spoken === text).length;
 
@@ -199,6 +290,7 @@ describe('story player narration', () => {
       </StrictMode>
     );
     const view = render(tree());
+    fireEvent.click(screen.getByText('Camera loaded'));
     return { ...view, rerender: () => view.rerender(tree()) };
   }
 
@@ -209,14 +301,32 @@ describe('story player narration', () => {
     rerender();
     expect(synth.texts()).toEqual([beats[0]]);
   });
+  it('reveals a challenge only after its narration ends, with a fresh timer', () => {
+    const { container } = renderPlayer();
+    advance(SHIELD_S * 1000);
+    expect(screen.queryByText('Tortoise needs your help!')).not.toBeInTheDocument();
+
+    advance(5000);
+    expect(screen.queryByText('Tortoise needs your help!')).not.toBeInTheDocument();
+    act(() => last(synth).onend?.());
+
+    expect(screen.getByText('Tortoise needs your help!')).toBeInTheDocument();
+    const timer = container.querySelector<HTMLElement>('.invite-timer span');
+    expect(timer).toHaveStyle({ width: '100%' });
+    advance(1000);
+    expect(Number.parseFloat(timer?.style.width ?? '100')).toBeLessThan(100);
+  });
   it('narrates each beat exactly once, in order, during normal playback', () => {
     renderPlayer();
     // No input: three held invitations resolve themselves along the way.
-    for (let second = 0; second < 80; second++) advance(1000);
+    for (let second = 0; second < 80; second++) {
+      advance(1000);
+      finishCurrentLine();
+    }
     const spoken = synth.texts();
     expect(spoken.filter((text) => beats.includes(text))).toEqual([...beats]);
-    // Plus exactly one gentle reaction per resolved moment, never a repeated beat.
-    expect(spoken).toHaveLength(beats.length + 3);
+    // Challenge outcomes use effects and captions, never extra synthesized speech.
+    expect(spoken).toHaveLength(beats.length);
     expect(screen.getByText('Story complete')).toBeInTheDocument();
     vi.runOnlyPendingTimers();
     expect(synth.cancel).toHaveBeenCalled(); // leaving the player silences it
@@ -225,7 +335,10 @@ describe('story player narration', () => {
     'narrates every %s scene exactly once, in story order, with no input',
     (storyId) => {
       renderPlayer(storyId);
-      for (let second = 0; second < 240; second++) advance(1000);
+      for (let second = 0; second < 240; second++) {
+        advance(1000);
+        finishCurrentLine();
+      }
       const lines = STORY_SCENES[storyId].map((scene) => scene.narration);
       const spoken = synth.texts().filter((text) => lines.includes(text));
       expect(spoken).toEqual(lines);
@@ -243,31 +356,34 @@ describe('story player narration', () => {
     expect(synth.texts().at(-1)).toMatch(/^(a )?sunny forest, lived a speedy Hare/);
     fireEvent.click(screen.getByRole('button', { name: 'Mute narration' }));
     fireEvent.click(screen.getByRole('button', { name: 'Unmute narration' }));
-    for (let second = 0; second < SHIELD_S - 2; second++) advance(1000);
+    for (let second = 0; second < SHIELD_S - 2; second++) {
+      advance(1000);
+      finishCurrentLine();
+    }
     expect(screen.getByText('Tortoise needs your help!')).toBeInTheDocument();
     // A gesture that the moment does not ask for says nothing.
     fireEvent.click(screen.getByText('Synthetic LEAN_RIGHT'));
     const before = synth.texts().length;
     fireEvent.click(screen.getByText('Synthetic ARMS_WIDE'));
-    // The right gesture: one short reaction, then the camera re-sending the pose
-    // and the animation states that follow (magic → walk) speak nothing more.
-    expect(synth.texts().slice(before)).toEqual([
-      'Wow! A magic shield! The leaves bounce right off!',
-    ]);
+    // The right gesture uses its visual/audio effect without browser speech.
+    expect(synth.texts().slice(before)).toEqual([]);
     fireEvent.click(screen.getByText('Synthetic ARMS_WIDE'));
     for (let second = 0; second < 3; second++) advance(1000);
-    expect(synth.texts()).toHaveLength(before + 1);
+    expect(synth.texts()).toHaveLength(before);
     expect(timesSpoken(beats[0])).toBe(1);
     expect(timesSpoken(beats[1])).toBe(1);
   });
-  it('mutes the reaction too, and never speaks it later', () => {
+  it('never speaks challenge-result captions', () => {
     renderPlayer();
-    for (let second = 0; second < SHIELD_S; second++) advance(1000);
+    for (let second = 0; second < SHIELD_S; second++) {
+      advance(1000);
+      finishCurrentLine();
+    }
     expect(screen.getByText('Tortoise needs your help!')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Mute narration' }));
+    const before = synth.texts().length;
     fireEvent.click(screen.getByText('Synthetic ARMS_WIDE'));
-    fireEvent.click(screen.getByRole('button', { name: 'Unmute narration' }));
     advance(1000);
+    expect(synth.texts()).toHaveLength(before);
     expect(synth.texts().some((text) => text.includes('magic shield'))).toBe(false);
   });
   it('speaks again only on intentional replay or restart', () => {

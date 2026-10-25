@@ -14,12 +14,22 @@ const TRY: Record<string, { label: string; hint: string }> = {
 };
 import './gestureDemo.css';
 
+const narrationReadyDemo = () =>
+  [...new Set(MOMENTS.map((moment) => moment.sceneId))].reduce(
+    (state, sceneId) =>
+      automaticStoryReducer(state, {
+        type: 'NARRATION_FINISHED',
+        sceneId,
+      }),
+    initialAutomaticStory(),
+  );
+
 /** Diagnostic companion; the primary experience is now /library/hare/play. */
 export function MagicGestureDemo() {
   const [state, dispatch] = useReducer(
     automaticStoryReducer,
     undefined,
-    initialAutomaticStory,
+    narrationReadyDemo,
   );
   useEffect(() => {
     const timer = window.setInterval(
@@ -71,7 +81,13 @@ export function MagicGestureDemo() {
           {TRY[gesture].label}
         </button>
       ))}{' '}
-      <button onClick={() => dispatch({ type: 'RESTART' })}>
+      <button
+        onClick={() => {
+          dispatch({ type: 'RESTART' });
+          for (const sceneId of new Set(MOMENTS.map((moment) => moment.sceneId)))
+            dispatch({ type: 'NARRATION_FINISHED', sceneId });
+        }}
+      >
         Replay optional scene
       </button>
       <GestureCamera

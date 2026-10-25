@@ -30,7 +30,7 @@ export type PoseWorkerReply =
       debugFrame?: ImageBitmap;
     };
 
-/** One worker + one in-flight bitmap per camera. start() must follow an explicit click. */
+/** One worker + one in-flight bitmap per camera. `start()` is safe to call once on mount. */
 export function createPoseCamera(
   video: HTMLVideoElement,
   options: PoseCameraOptions,

@@ -5,6 +5,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
 } from '@testing-library/react';
 import { GestureCamera } from '../components/gesture/GestureCamera';
 import type { PoseCameraOptions } from '../vision/poseCamera';
@@ -28,12 +29,12 @@ beforeEach(() => {
   history.replaceState(null, '', '/');
 });
 afterEach(() => cleanup());
-it('starts only on click, hides developer controls by default, and cleans up on unmount', () => {
+it('requests the camera on mount, keeps manual retry, and cleans up on unmount', async () => {
   const { unmount } = render(<GestureCamera onAction={vi.fn()} />);
-  expect(mocks.start).not.toHaveBeenCalled();
+  await waitFor(() => expect(mocks.start).toHaveBeenCalledOnce());
   expect(screen.queryByLabelText('Show skeleton')).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Start Camera' }));
-  expect(mocks.start).toHaveBeenCalledOnce();
+  expect(mocks.start).toHaveBeenCalledTimes(2);
   act(() => options.onStatus('tracking'));
   fireEvent.click(screen.getByRole('button', { name: 'Stop Camera' }));
   expect(mocks.stop).toHaveBeenCalledOnce();

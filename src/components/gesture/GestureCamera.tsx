@@ -130,8 +130,12 @@ export function GestureCamera({
     };
     window.addEventListener('pagehide', stop);
     document.addEventListener('visibilitychange', hide);
+    // Delay by one task so React's development StrictMode can perform its
+    // mount/unmount check without opening two permission requests.
+    const autoStart = window.setTimeout(() => void camera.start(), 0);
     return () => {
       mounted = false;
+      window.clearTimeout(autoStart);
       window.removeEventListener('pagehide', stop);
       document.removeEventListener('visibilitychange', hide);
       camera.stop();

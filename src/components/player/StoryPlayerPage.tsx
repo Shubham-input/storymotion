@@ -23,7 +23,7 @@ import type { BodyGesture } from '../../vision/bodyGestures';
 import { playSfx, unlockSfx } from '../../audio/sfx';
 import type { Sfx } from '../../audio/sfx';
 import { useNarration } from '../../hooks/useNarration';
-import { narrator } from '../../audio/narrator';
+import { generatedNarrationFor } from '../../audio/generatedNarration';
 import './automaticStory.css';
 
 export function StoryPlayerPage() {
@@ -42,7 +42,7 @@ function AutomaticStoryPlayer({ story }: { story: StorySummary }) {
   const [state, dispatch] = useReducer(
     automaticStoryReducer,
     story.id,
-    initialAutomaticStory,
+    (storyId) => ({ ...initialAutomaticStory(storyId), cameraBusy: true }),
   );
   const MOMENTS = SCRIPTS[story.id].moments;
   const character =
@@ -52,16 +52,43 @@ function AutomaticStoryPlayer({ story }: { story: StorySummary }) {
   const active = sceneAt(story.id, state.elapsed);
   const text = active.scene.narration;
   const lastScene = active.index === SCENE_COUNT[story.id] - 1;
+  const narrationTrack = generatedNarrationFor(
+    story.id,
+    active.scene.id,
+    active.scene.narration,
+  );
+  const nextScene = STORY_SCENES[story.id][active.index + 1];
+  const nextNarrationTrack = nextScene
+    ? generatedNarrationFor(story.id, nextScene.id, nextScene.narration)
+    : undefined;
   // A new id per scene and per restart: each line is spoken once, never per render.
   const [run, setRun] = useState(0);
   const replayNarration = useNarration(
     `${story.id}:${run}:${active.scene.id}`,
     text,
     audioEnabled,
-    state.paused,
+    state.paused || state.cameraBusy || state.interaction === 'open',
+    narrationTrack?.url,
+    narrationTrack?.durationMs,
+    active.scene.durationMs,
+    nextNarrationTrack?.url,
+    () =>
+      dispatch({
+        type: 'NARRATION_FINISHED',
+        sceneId: active.scene.id,
+      }),
   );
+  // A muted story cannot emit an audio-ended event. Once it reaches a hidden
+  // challenge, let the child continue without waiting for sound they disabled.
   useEffect(() => {
-    if (state.paused || state.finished) return;
+    if (!audioEnabled && state.interaction === 'pending')
+      dispatch({
+        type: 'NARRATION_FINISHED',
+        sceneId: active.scene.id,
+      });
+  }, [audioEnabled, active.scene.id, state.interaction]);
+  useEffect(() => {
+    if (state.paused || state.cameraBusy || state.finished) return;
     let last = performance.now();
     const timer = window.setInterval(() => {
       const now = performance.now();
@@ -69,7 +96,7 @@ function AutomaticStoryPlayer({ story }: { story: StorySummary }) {
       last = now;
     }, 200);
     return () => window.clearInterval(timer);
-  }, [state.paused, state.finished]);
+  }, [state.paused, state.cameraBusy, state.finished]);
   useEffect(() => {
     if (state.finished) void navigate(routes.complete(story.id));
   }, [state.finished, navigate, story.id]);
@@ -98,20 +125,8 @@ function AutomaticStoryPlayer({ story }: { story: StorySummary }) {
     setResolved({ key: resolvedKey, at: state.elapsed });
   const freshOutcome =
     lastOutcome && state.elapsed < resolved.at + CAPTION_MS ? lastOutcome : null;
-  // The narrator reacts once to each resolved moment (never restarting a story line).
-  // Moments are scheduled after their scene's narration, so a reaction never cuts it off.
-  useEffect(() => {
-    state.responses.forEach((gesture, index) => {
-      const outcome = gesture ?? (state.auto[index] ? 'auto' : null);
-      if (!outcome) return;
-      const moment = MOMENTS[index].id;
-      narrator.interject(
-        `${story.id}:${run}:react:${moment}`,
-        reaction(moment, outcome, name).spoken,
-      );
-    });
-  }, [state.responses, state.auto, run, story.id, name, MOMENTS]);
-  // Sound cues follow the mute toggle; speech and sounds are best effort.
+  // Challenge outcomes stay visual and use sound effects only; narration is
+  // reserved for authored story scenes so a browser voice never interrupts Muse.
   const sound = (cue: Sfx) => {
     playSfx(cue); // follows the global sound-effects switch
   };
@@ -184,7 +199,7 @@ function AutomaticStoryPlayer({ story }: { story: StorySummary }) {
                 outcomes={outcomes}
                 openMoment={open ? state.moment : null}
                 onFinishLine={() => soundRef.current('finish')}
-                paused={state.paused}
+                paused={state.paused || state.cameraBusy}
               />
               <div
                 key={open ? `ask-${state.moment}` : `after-${state.moment}`}
@@ -248,7 +263,7 @@ function AutomaticStoryPlayer({ story }: { story: StorySummary }) {
                 ) : (
                   <p>
                     {state.cameraBusy
-                      ? 'Keep watching while your camera gets ready. A surprise can wait!'
+                      ? 'Allow the camera, then your story will begin!'
                       : state.moment > 0
                         ? 'On with the adventure!'
                         : 'Sit back and enjoy. A little surprise is coming soon!'}
@@ -259,7 +274,7 @@ function AutomaticStoryPlayer({ story }: { story: StorySummary }) {
             <div className="theater-bottom">
               <NarrationPanel
                 variant="subtitle"
-                speaker="Narrator"
+                speaker={narrationTrack ? 'Muse • Gemini Voice ✨' : 'Narrator'}
                 text={text}
                 onReplay={replayNarration}
               />

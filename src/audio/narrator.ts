@@ -9,6 +9,7 @@
  */
 export type SpeechLike = Pick<SpeechSynthesis, 'speak' | 'cancel'>;
 type UtteranceFactory = (text: string) => SpeechSynthesisUtterance;
+type AudioFactory = (url: string) => HTMLAudioElement;
 
 type Status = 'idle' | 'speaking' | 'interrupted' | 'done';
 
@@ -22,8 +23,16 @@ const ESTIMATED_CHARS_PER_SECOND = 12;
 export function createNarrator(
   getSynth: () => SpeechLike | null,
   makeUtterance: UtteranceFactory,
+  makeAudio?: AudioFactory,
 ) {
-  let line: { id: string; text: string } | null = null;
+  let line: {
+    id: string;
+    text: string;
+    audioUrl?: string;
+    audioDurationMs?: number | null;
+    slotDurationMs?: number;
+    onFinished?: () => void;
+  } | null = null;
   let status: Status = 'idle';
   /** Character index of the word being spoken; resume restarts from that word. */
   let offset = 0;
@@ -33,6 +42,9 @@ export function createNarrator(
   let generation = 0;
   /** Held so Chrome cannot garbage-collect a speaking utterance mid-line. */
   let current: SpeechSynthesisUtterance | null = null;
+  let currentAudio: HTMLAudioElement | null = null;
+  /** Avoid retrying a broken generated track until a new line or explicit replay. */
+  let audioFailed = false;
   let releaseTimer: ReturnType<typeof setTimeout> | null = null;
   let startedAt = 0;
   let heardBoundary = false;
@@ -42,10 +54,20 @@ export function createNarrator(
 
   const canSpeak = () => enabled && !paused;
 
+  function finishLine() {
+    if (status === 'done') return;
+    status = 'done';
+    line?.onFinished?.();
+  }
+
   function silence() {
     generation++;
     current = null;
     interjecting = false;
+    if (currentAudio) {
+      currentAudio.pause();
+      currentAudio = null;
+    }
     try {
       getSynth()?.cancel();
     } catch {
@@ -53,13 +75,57 @@ export function createNarrator(
     }
   }
 
+  function speakAudio() {
+    if (!line?.audioUrl || !makeAudio || audioFailed) return false;
+    silence();
+    const mine = generation;
+    const audio = makeAudio(line.audioUrl);
+    currentAudio = audio;
+    if (line.audioDurationMs && line.slotDurationMs) {
+      // Keep long generated clips inside their scene without making Muse sound rushed.
+      audio.playbackRate = Math.min(
+        1.25,
+        Math.max(
+          1,
+          line.audioDurationMs / Math.max(1, line.slotDurationMs - 350),
+        ),
+      );
+    }
+    audio.onended = () => {
+      if (mine === generation && status === 'speaking') finishLine();
+    };
+    audio.onerror = () => {
+      if (mine !== generation) return;
+      audioFailed = true;
+      currentAudio = null;
+      speakFrom(0);
+    };
+    status = 'speaking';
+    void audio.play().catch(() => {
+      if (mine !== generation) return;
+      audioFailed = true;
+      currentAudio = null;
+      speakFrom(0);
+    });
+    return true;
+  }
+
+  function startLine() {
+    if (!line) return;
+    if (!speakAudio()) speakFrom(0);
+  }
+
   function speakFrom(from: number) {
     const synth = getSynth();
-    if (!line || !synth) return;
+    if (!line) return;
+    if (!synth) {
+      finishLine();
+      return;
+    }
     silence();
     const text = line.text.slice(from);
     if (!text.trim()) {
-      status = 'done';
+      finishLine();
       return;
     }
     const mine = generation;
@@ -72,11 +138,11 @@ export function createNarrator(
       offset = from + event.charIndex;
     };
     utterance.onend = () => {
-      if (mine === generation && status === 'speaking') status = 'done';
+      if (mine === generation && status === 'speaking') finishLine();
     };
     utterance.onerror = () => {
       // Autoplay refusal or a missing voice: give up on this line, keep captions.
-      if (mine === generation && status === 'speaking') status = 'done';
+      if (mine === generation && status === 'speaking') finishLine();
     };
     current = utterance;
     offset = from;
@@ -86,12 +152,17 @@ export function createNarrator(
     try {
       synth.speak(utterance);
     } catch {
-      status = 'done';
+      finishLine();
     }
   }
 
   function interrupt() {
     if (status !== 'speaking' || !line) return;
+    if (currentAudio) {
+      currentAudio.pause();
+      status = 'interrupted';
+      return;
+    }
     if (!heardBoundary) {
       const spoken = Math.floor(
         ((Date.now() - startedAt) / 1000) * ESTIMATED_CHARS_PER_SECOND,
@@ -113,22 +184,60 @@ export function createNarrator(
     line = null;
     status = 'idle';
     offset = 0;
+    audioFailed = false;
   }
 
   function sync() {
     if (!canSpeak()) {
       if (interjecting) silence(); // a reaction is not resumed later
       interrupt();
-    } else if (status === 'interrupted') speakFrom(offset);
+    } else if (status === 'interrupted') {
+      if (currentAudio) {
+        status = 'speaking';
+        void currentAudio.play().catch(() => {
+          audioFailed = true;
+          currentAudio = null;
+          speakFrom(offset);
+        });
+      } else if (line?.audioUrl && !audioFailed && offset === 0) startLine();
+      else speakFrom(offset);
+    }
   }
 
   return {
     /** Speak this line once. Repeating the current id never restarts it. */
-    setLine(id: string, text: string) {
-      if (line?.id === id && line.text === text) return;
-      line = { id, text };
+    setLine(
+      id: string,
+      text: string,
+      audioUrl?: string,
+      audioDurationMs?: number | null,
+      slotDurationMs?: number,
+      onFinished?: () => void,
+    ) {
+      if (line?.id === id && line.text === text) {
+        line.onFinished = onFinished;
+        // A track may become available after the browser fallback has started.
+        // Keep the current voice stable; intentional replay will use the track.
+        if (audioUrl) {
+          line.audioUrl = audioUrl;
+          line.audioDurationMs = audioDurationMs;
+          line.slotDurationMs = slotDurationMs;
+          audioFailed = false;
+        }
+        return;
+      }
+      line = {
+        id,
+        text,
+        audioUrl,
+        audioDurationMs,
+        slotDurationMs,
+        onFinished,
+      };
       offset = 0;
-      if (canSpeak()) speakFrom(0);
+      audioFailed = false;
+      status = 'idle';
+      if (canSpeak()) startLine();
       else {
         // Spoken from the start once sound/playback is allowed, if still current.
         silence();
@@ -174,7 +283,8 @@ export function createNarrator(
     replay() {
       if (!line) return;
       offset = 0;
-      if (canSpeak()) speakFrom(0);
+      if (line.audioUrl) audioFailed = false;
+      if (canSpeak()) startLine();
       else {
         silence();
         status = 'interrupted';
@@ -199,7 +309,12 @@ export function createNarrator(
     stop,
     /** For tests and debugging. */
     get state() {
-      return { lineId: line?.id ?? null, status, offset, holding: current };
+      return {
+        lineId: line?.id ?? null,
+        status,
+        offset,
+        holding: current ?? currentAudio,
+      };
     },
   };
 }
@@ -213,4 +328,5 @@ const supported = () =>
 export const narrator = createNarrator(
   () => (supported() ? window.speechSynthesis : null),
   (text) => new SpeechSynthesisUtterance(text),
+  (url) => new Audio(url),
 );

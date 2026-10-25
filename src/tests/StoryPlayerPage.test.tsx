@@ -14,6 +14,10 @@ import type { MagicAction } from '../vision/magicGesture';
 import type { TrackingStatus } from '../vision/poseCamera';
 import { MOMENTS, SCRIPTS } from '../engine/automaticStory';
 
+vi.mock('../audio/generatedNarration', () => ({
+  generatedNarrationFor: () => undefined,
+}));
+
 vi.mock('../components/gesture/GestureCamera', () => ({
   GestureCamera: ({
     onAction,
@@ -46,7 +50,7 @@ vi.mock('../components/gesture/GestureCamera', () => ({
     </aside>
   ),
 }));
-function renderPlayer(storyId = 'hare') {
+function renderPlayer(storyId = 'hare', cameraReady = true) {
   const router = createMemoryRouter(
     [
       { path: '/library/:storyId/play', element: <StoryPlayerPage /> },
@@ -54,13 +58,20 @@ function renderPlayer(storyId = 'hare') {
     ],
     { initialEntries: [`/library/${storyId}/play`] },
   );
-  return render(
+  const view = render(
     <SessionProvider>
       <RouterProvider router={router} />
     </SessionProvider>,
   );
+  if (cameraReady) fireEvent.click(screen.getByText('Camera loaded'));
+  return view;
 }
-const advance = (ms: number) => act(() => vi.advanceTimersByTime(ms));
+// Flush React effects between wall-clock chunks so narration completion can unlock
+// a pending invitation before the following chunk spends its response window.
+const advance = (ms: number) => {
+  for (let elapsed = 0; elapsed < ms; elapsed += 1000)
+    act(() => vi.advanceTimersByTime(Math.min(1000, ms - elapsed)));
+};
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => {
   cleanup();
@@ -213,7 +224,7 @@ describe('integrated automatic story', () => {
     advance(3000);
     expect(screen.queryByRole('button', { name: 'Use Magic' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByText('Camera loaded'));
-    advance(200);
+    advance(1200);
     expect(screen.getByRole('button', { name: 'Use Magic' })).toBeInTheDocument();
     advance(4000);
     fireEvent.click(screen.getByRole('button', { name: 'Start Camera' }));
@@ -224,28 +235,34 @@ describe('integrated automatic story', () => {
     advance(7400); // a fresh full window after the second setup
     expect(screen.getByRole('button', { name: 'Use Magic' })).toBeInTheDocument();
   });
-  it('resolves a moment that camera setup outlasts and offers the next one in full', () => {
+  it('holds the opening scene until the automatic camera preflight resolves', () => {
+    renderPlayer('hare', false);
+    advance(12000);
+    expect(
+      screen.getByText(/Once upon a time, in a sunny forest/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Nobody can beat me/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText('Camera loaded'));
+    advance(9200);
+    expect(screen.getByText(/Nobody can beat me/)).toBeInTheDocument();
+  });
+  it('keeps the story frozen even when camera setup takes a long time', () => {
     renderPlayer();
     advance(SHIELD_AT - 1000);
     fireEvent.click(screen.getByRole('button', { name: 'Start Camera' }));
     advance(9400);
     expect(screen.queryByRole('button', { name: 'Use Magic' })).not.toBeInTheDocument();
-    expect(caption(/Tortoise found another way/)).toBeInTheDocument();
+    expect(screen.queryByText(/Tortoise found another way/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByText('Camera loaded'));
-    advance(2400);
-    expect(screen.getByText('Which way should Tortoise go?')).toBeInTheDocument();
-    advance(6600);
-    fireEvent.click(screen.getByRole('button', { name: 'Choose Left' }));
-    expect(caption(/Left path chosen!/)).toBeInTheDocument();
-    advance(NO_INPUT_MS);
-    expect(screen.getByText('Story complete')).toBeInTheDocument();
+    advance(1200);
+    expect(screen.getByRole('button', { name: 'Use Magic' })).toBeInTheDocument();
   });
   it('keeps manual interaction available after denied permission', () => {
     renderPlayer();
     fireEvent.click(screen.getByRole('button', { name: 'Start Camera' }));
     advance(SHIELD_AT);
     fireEvent.click(screen.getByText('Camera denied'));
-    advance(200);
+    advance(SHIELD_AT + 200);
     fireEvent.click(screen.getByRole('button', { name: 'Use Magic' }));
     expect(caption(/Magic shield!/)).toBeInTheDocument();
   });

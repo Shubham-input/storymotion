@@ -11,7 +11,7 @@ shared global styles, and legacy exercise components are preserved.
 2. `npm run dev` and open the printed localhost URL.
 3. Start Adventure → choose a story → choose a character → Let's Go.
 4. The animated story starts immediately. Camera access is optional; click
-   **Start Camera** in the small panel to request it. Old `/camera` URLs redirect
+   Allow the camera prompt when the story opens; **Start Camera** retries it. Old `/camera` URLs redirect
    to the player, so they no longer show simulated permission success.
 
 Production: `npm run build`, then `npm run preview`. Both the main app and

@@ -169,7 +169,7 @@ playful movement.
 |---|---|---|
 | 0:00–0:12 | Home page → library | "Stories usually ask kids to sit still. StoryMotion is a cartoon you can step into, using just a laptop webcam." |
 | 0:12–0:25 | Pick Tortoise → Let's Go; title card; Hare dashes off | "It plays like an animated short. No controller, no account, and nothing is recorded." |
-| 0:25–0:35 | Click **Start Camera** beforehand so tracking says "Camera ready" | "The camera runs Google's MediaPipe pose model in a background worker, right here in the browser." |
+| 0:25–0:35 | Allow the camera prompt so tracking says "Camera ready" | "The camera runs Google's MediaPipe pose model in a background worker, right here in the browser." |
 | 0:35–0:50 | Moment 1: volunteer **leans right**; sunny trail and sparkles | "At special moments the story invites you to help. Lean, and Tortoise takes the sunny trail. One movement, one reaction: it won't re-trigger until you return to neutral." |
 | 0:50–1:05 | Moment 2: volunteer **spreads arms**; shield bubble, leaves bounce off | "A gust of leaves! Arms wide makes a shield. Ducking or a button works too, so seated kids can play." |
 | 1:05–1:15 | Hare wakes; Tortoise wins; confetti; moral card | "And if you do nothing, the story simply continues. No one is left behind." |

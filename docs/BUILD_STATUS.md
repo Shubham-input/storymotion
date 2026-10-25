@@ -169,8 +169,8 @@ The main story player now uses a camera-independent automatic timeline and anima
 SVG scenes for all three stories. The hard-coded clapperboard and repeated exercise
 requirements are gone from the active player. Existing registry/session architecture
 and legacy components remain preserved. Character selection goes straight to play;
-legacy camera URLs redirect to the player. Camera permission is requested only from
-the in-player Start Camera button. Captions, optional browser narration, pause,
+legacy camera URLs redirect to the player. Camera permission is requested when the
+player opens, with an in-player Start Camera retry. Captions, optional browser narration, pause,
 replay, manual action controls, and automatic completion are implemented.
 
 The optional twelve-second invitation is deferred/reset during camera setup, while

@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { narrator } from '../audio/narrator';
 
 /**
@@ -12,13 +12,42 @@ export function useNarration(
   text: string,
   enabled: boolean,
   paused: boolean,
+  audioUrl?: string,
+  audioDurationMs?: number | null,
+  slotDurationMs?: number,
+  preloadUrl?: string,
+  onFinished?: () => void,
 ) {
+  const onFinishedRef = useRef(onFinished);
+  useEffect(() => {
+    onFinishedRef.current = onFinished;
+  }, [onFinished]);
   useEffect(() => {
     narrator.claim();
     return () => narrator.release();
   }, []);
   useEffect(() => narrator.setEnabled(enabled), [enabled]);
   useEffect(() => narrator.setPaused(paused), [paused]);
-  useEffect(() => narrator.setLine(lineId, text), [lineId, text]);
+  useEffect(
+    () =>
+      narrator.setLine(
+        lineId,
+        text,
+        audioUrl,
+        audioDurationMs,
+        slotDurationMs,
+        () => onFinishedRef.current?.(),
+      ),
+    [lineId, text, audioUrl, audioDurationMs, slotDurationMs],
+  );
+  useEffect(() => {
+    if (!preloadUrl || typeof document === 'undefined') return;
+    const preload = document.createElement('link');
+    preload.rel = 'preload';
+    preload.as = 'audio';
+    preload.href = preloadUrl;
+    document.head.append(preload);
+    return () => preload.remove();
+  }, [preloadUrl]);
   return narrator.replay;
 }

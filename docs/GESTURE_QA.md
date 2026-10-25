@@ -75,7 +75,7 @@ no real camera footage is used or saved. Chrome must be installed at its normal 
 
 1. Run `npm run dev`. In Chrome, open the printed **localhost** URL, then choose
    Tortoise and Hare → Tortoise → Let's Go. Verify it animates and ends without input.
-2. Replay. Click **Start Camera**, allow the browser camera prompt, and allow Chrome
+2. Replay. Allow the browser camera prompt (or use **Start Camera** to retry), and allow Chrome
    in macOS **System Settings → Privacy & Security → Camera** if necessary. No microphone
    permission is needed. Expect your live preview, then Camera ready/Looking for you.
 3. Sit or stand comfortably with shoulders and hands visible, arms relaxed briefly.
@@ -216,7 +216,7 @@ Physical webcam gestures: **MANUAL_REQUIRED** (not run).
 ### MacBook webcam checklist (MANUAL — not run by Claude)
 
 1. `npm run dev`, then open the localhost URL in Chrome → Tortoise & Hare → Tortoise →
-   Let's Go → **Start Camera** → allow. Stand 2–3 m back with your shoulders and hands in
+   Let's Go → allow the camera prompt. Stand 2–3 m back with your shoulders and hands in
    view, arms relaxed for about 1 s ("Camera ready").
 2. Moment 1 (~9 s, "Which way should we go?"): lean right and hold for about half a
    second. Expect the "Right path chosen!" banner, a warm light tint, sparkles, and the

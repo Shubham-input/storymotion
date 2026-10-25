@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, render, screen } from '@testing-library/react';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
@@ -19,7 +20,15 @@ import { StoryPlayerPage } from '../components/player/StoryPlayerPage';
 import { SessionProvider } from '../app/SessionContext';
 
 vi.mock('../components/gesture/GestureCamera', () => ({
-  GestureCamera: () => <aside>Camera controls</aside>,
+  GestureCamera: ({
+    onStatusChange,
+  }: {
+    onStatusChange?: (status: 'missing') => void;
+  }) => {
+    const initialStatusChange = useRef(onStatusChange);
+    useEffect(() => initialStatusChange.current?.('missing'), []);
+    return <aside>Camera controls</aside>;
+  },
 }));
 
 const events = (storyId: StoryId) => STORY_SCENES[storyId].flatMap((scene) => scene.events);

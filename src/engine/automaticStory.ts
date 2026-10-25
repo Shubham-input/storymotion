@@ -11,13 +11,13 @@ export type Moment = {
   startMs: number;
   windowMs: number;
   accepts: readonly BodyGesture[];
+  sceneId: string;
 };
 /**
- * Optional invitations. Each opens at startMs (or as soon as camera setup finishes)
- * and lasts windowMs. While one is open, story time holds — the character waits at
- * the obstacle — so the child's response window never runs out behind their back.
- * A moment that camera setup outlasts by more than its window resolves on its own.
- * Moments and durations come from the scene list in data/stories/scenes.ts.
+ * Optional invitations. Each opens at startMs and lasts windowMs. Story time holds
+ * during camera setup and while an invitation is open, so neither the opening scene
+ * nor a response window runs ahead of the child. Moments and durations come from the
+ * scene list in data/stories/scenes.ts.
  */
 export type StoryScript = { durationMs: number; moments: readonly Moment[] };
 /** Each story's length (story time) and its optional invitations. */
@@ -44,8 +44,10 @@ export type AutomaticStoryState = {
   cameraBusy: boolean;
   /** Index of the current or next moment; MOMENTS.length once all are over. */
   moment: number;
-  interaction: 'waiting' | 'open' | 'done';
+  interaction: 'waiting' | 'pending' | 'open' | 'done';
   remaining: number;
+  /** Scene ids whose narration has ended, allowing their invitation to appear. */
+  narratedScenes: string[];
   /** One response (or null if skipped/ignored) per moment. */
   responses: (BodyGesture | null)[];
   /** True where a moment resolved itself because nobody answered. */
@@ -66,6 +68,7 @@ export const initialAutomaticStory = (
   moment: 0,
   interaction: 'waiting',
   remaining: SCRIPTS[storyId].moments[0].windowMs,
+  narratedScenes: [],
   responses: SCRIPTS[storyId].moments.map(() => null),
   auto: SCRIPTS[storyId].moments.map(() => false),
   magic: false,
@@ -78,6 +81,7 @@ export type StoryAction =
   | { type: 'TICK'; ms: number }
   | { type: 'PAUSE'; paused: boolean }
   | { type: 'CAMERA_BUSY'; busy: boolean }
+  | { type: 'NARRATION_FINISHED'; sceneId: string }
   | { type: 'RESTART' };
 
 function closeMoment(
@@ -97,7 +101,7 @@ function closeMoment(
   };
 }
 
-/** Story time never depends on camera/model/landmarks. Only the optional windows do. */
+/** Story time waits during camera preflight, then runs independently of tracking. */
 export function automaticStoryReducer(
   state: AutomaticStoryState,
   action: StoryAction,
@@ -119,6 +123,19 @@ export function automaticStoryReducer(
         // Starting the camera during an invitation gives a fresh window after setup.
         interaction: reset ? 'waiting' : state.interaction,
         remaining: reset ? moments[state.moment].windowMs : state.remaining,
+      };
+    }
+    case 'NARRATION_FINISHED': {
+      const narratedScenes = state.narratedScenes.includes(action.sceneId)
+        ? state.narratedScenes
+        : [...state.narratedScenes, action.sceneId];
+      const waitingForThisScene =
+        state.interaction === 'pending' &&
+        moments[state.moment]?.sceneId === action.sceneId;
+      return {
+        ...state,
+        narratedScenes,
+        interaction: waitingForThisScene ? 'open' : state.interaction,
       };
     }
     case 'HAND_RAISE':
@@ -150,6 +167,7 @@ export function automaticStoryReducer(
     case 'TICK': {
       if (
         state.paused ||
+        state.cameraBusy ||
         state.finished ||
         !Number.isFinite(action.ms) ||
         action.ms <= 0
@@ -162,21 +180,23 @@ export function automaticStoryReducer(
           ? { ...state, remaining }
           : closeMoment({ ...state, remaining }, true);
       }
+      // The scene remains on its challenge beat while Muse finishes the line.
+      // The response timer has not appeared and does not count down yet.
+      if (state.interaction === 'pending') return state;
       let next: AutomaticStoryState = {
         ...state,
         elapsed: state.elapsed + action.ms,
       };
       if (next.interaction === 'waiting') {
         const moment = moments[next.moment];
-        if (next.elapsed >= moment.startMs + moment.windowMs)
-          next = closeMoment(next, true); // missed while the camera was being set up
-        else if (!next.cameraBusy && next.elapsed >= moment.startMs)
+        if (!next.cameraBusy && next.elapsed >= moment.startMs)
           next = {
             ...next,
-            // Stop exactly at the obstacle, unless camera setup already carried us past it.
-            elapsed:
-              state.elapsed < moment.startMs ? moment.startMs : next.elapsed,
-            interaction: 'open',
+            // Stop exactly at the obstacle. Reveal it only after its scene's line.
+            elapsed: moment.startMs,
+            interaction: next.narratedScenes.includes(moment.sceneId)
+              ? 'open'
+              : 'pending',
             remaining: moment.windowMs,
           };
       }
