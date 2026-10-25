@@ -4,7 +4,7 @@
 
 Built at **HackTX 2026** · React · TypeScript · MediaPipe · Web Workers · SVG animation · Gemini TTS
 
-> **Live demo:** _add deployed URL here_ · **Video:** _add demo video link here_
+> **Devpost:** https://devpost.com/software/storymotion
 
 ---
 
@@ -187,10 +187,6 @@ The automated tests don't use a physical webcam. Gesture accuracy with real peop
 - A fuller Family Mode, where the parent makes story choices and the child does the movements.
 - Recorded narration for every story (Three Pigs still uses the browser voice).
 - Better support for tablets and classrooms.
-
-## Team
-
-_Add team members here._
 
 ---
 
