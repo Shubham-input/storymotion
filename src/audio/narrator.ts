@@ -101,7 +101,8 @@ export function createNarrator(
       speakFrom(0);
     };
     status = 'speaking';
-    void audio.play().catch(() => {
+    // Older engines (and jsdom) return undefined instead of a promise.
+    void audio.play()?.catch(() => {
       if (mine !== generation) return;
       audioFailed = true;
       currentAudio = null;
@@ -194,7 +195,7 @@ export function createNarrator(
     } else if (status === 'interrupted') {
       if (currentAudio) {
         status = 'speaking';
-        void currentAudio.play().catch(() => {
+        void currentAudio.play()?.catch(() => {
           audioFailed = true;
           currentAudio = null;
           speakFrom(offset);

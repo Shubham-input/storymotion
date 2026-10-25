@@ -87,6 +87,20 @@ function AutomaticStoryPlayer({ story }: { story: StorySummary }) {
         sceneId: active.scene.id,
       });
   }, [audioEnabled, active.scene.id, state.interaction]);
+  // Speech engines and stalled audio can fail to emit an end event at all. Never
+  // let a hidden challenge wait on narration forever: open it after a grace period.
+  useEffect(() => {
+    if (state.paused || state.interaction !== 'pending') return;
+    const timer = window.setTimeout(
+      () =>
+        dispatch({
+          type: 'NARRATION_FINISHED',
+          sceneId: active.scene.id,
+        }),
+      NARRATION_WAIT_MAX_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, [active.scene.id, state.interaction, state.paused]);
   useEffect(() => {
     if (state.paused || state.cameraBusy || state.finished) return;
     let last = performance.now();
@@ -314,6 +328,8 @@ function AutomaticStoryPlayer({ story }: { story: StorySummary }) {
 
 /** How long (story ms) a "You did it!" caption stays before the banner relaxes. */
 const CAPTION_MS = 6000;
+/** Longest a challenge waits for its scene's narration to report that it ended. */
+const NARRATION_WAIT_MAX_MS = 10000;
 const GESTURE_SFX: Record<BodyGesture, Sfx> = {
   HAND_RAISE: 'magic',
   LEAN_LEFT: 'path',
